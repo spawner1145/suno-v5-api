@@ -6,8 +6,7 @@ import random
 import string
 import uuid
 from typing import Optional, Dict, Any
-
-"翻到底下，参数都在下面"
+import os
 
 HEADERS: Dict[str, str] = {
     'accept': '*/*',
@@ -36,7 +35,7 @@ PAYLOAD: Dict[str, Any] = {
     "title": "",
     "tags": "// Genre & Style\nINSTRUMENTAL COMPLEXTRO, HIGH-ENERGY RHYTHM GAME ANTHEM, J-CORE, HARDCORE TECHNO\n\n// Mood & Atmosphere\nAn intense, adrenaline-fueled, euphoric and aggressive track, with a futuristic, cybernetic, and slightly chaotic feel, Designed for fast-paced, precision gameplay, // Technical & Production\nDriving 155 BPM, powerful four-on-the-floor rhythm with syncopated breakbeats, Pristine, professional, and polished production quality, heavy sidechain compression for a pumping feel, wide stereo field, impactful dynamics, powerful sub-bass and crystal-clear highs", # 简化为实际请求中的格式
     "negative_tags": "",
-    "mv": "chirp-crow", # 这个东西是suno模型的版本号，好像是只能f12看的，和网页端显示的不一样，这边这个代表suno v5
+    "mv": "chirp-crow",
     "prompt": "[Intro]\n(Starts with a filtered kick drum and a ticking hi-hat pattern. A digital riser sweep builds tension.)\n[Silence]\n\n[Verse]\n(The full PUNCHY KICK DRUM and CRISP LAYERED SNARES enter, driving the beat. An AGGRESSIVE GROWLING BASSLINE, heavily modulated with LFOs, takes the rhythmic lead. Fast, sharp, metallic HI-HATS create a sense of urgency.)\n\n[Build-up]\n(The beat simplifies to just kicks and hi-hats. FAST ARPEGGIATED SYNTHS start to bubble up. Snare rolls get faster and faster. Add GLITCH SFX and a rising white noise SWEEP.)\n\n[Drop]\n(Maximum impact. The RAZOR-SHARP SAWTOOTH SYNTH LEAD plays an intricate, fragmented melody. Bright SUPER-SAW CHORDS provide powerful harmonic background. STUTTERING VOCAL CHOPS are used as a percussive and melodic hook. The growling bassline becomes even more complex.)\n\n[Verse 2]\n(The sawtooth lead drops out. The growling bass and a new, chopped-up melodic fragment take center stage. The drum pattern becomes more syncopated with added digital percussion fills.)\n\n[Bridge]\n(Atmospheric breakdown. The heavy drums and bass fade out, leaving behind echoing SUPER-SAW PADS and a gentle, melodic synth pluck sequence. A sense of calm before the final storm.)\n\n[Build-up 2]\n(The kick drum re-enters with a heavy sidechain pump. The fast arpeggiated synths return, more intense than before. Add video game sound effects and a powerful riser.)\n\n[Final Drop]\n(Explosive energy. All elements combine. The sawtooth synth lead returns with a higher octave and more aggression. The vocal chops are faster and more glitched. The track is filled with complex drum fills and chaotic glitch sound effects.)\n\n[Outro]\n(Music comes to a hard cut at the climax, followed by the sound of a decaying reverb tail from the final synth chord and a final, single \"glitch\" sound effect.)",
     "make_instrumental": False,
     "user_uploaded_images_b64": None,
@@ -104,17 +103,19 @@ def generate_random_filename(length: int = 10) -> str:
     letters = string.ascii_lowercase + string.digits
     return ''.join(random.choice(letters) for _ in range(length)) + ".mp3"
 
-async def download_audio(client: httpx.AsyncClient, audio_url: str, clip_id: str) -> str:
+async def download_audio(client: httpx.AsyncClient, audio_url: str, clip_id: str, download_dir: str = ".") -> str:
     try:
         print(f"[{clip_id}] 状态完成, 开始下载音频: {audio_url}")
         async with client.stream("GET", audio_url) as response:
             response.raise_for_status()
             filename = generate_random_filename()
-            with open(filename, "wb") as f:
+            os.makedirs(download_dir, exist_ok=True)
+            filepath = os.path.join(download_dir, filename)
+            with open(filepath, "wb") as f:
                 async for chunk in response.aiter_bytes():
                     f.write(chunk)
-            print(f"[{clip_id}] 下载完成, 已保存为: {filename}")
-            return filename
+            print(f"[{clip_id}] 下载完成, 已保存为: {filepath}")
+            return filepath
     except httpx.HTTPStatusError as e:
         print(f"[{clip_id}] 下载失败 (HTTP {e.response.status_code}): {audio_url}")
         return None
@@ -122,7 +123,7 @@ async def download_audio(client: httpx.AsyncClient, audio_url: str, clip_id: str
         print(f"[{clip_id}] 下载时发生未知错误: {e}")
         return None
 
-async def generate_songs(cookie: str, prompt: str = "", tags: str = "", negative_tags: str = "", proxy: Optional[str] = None, make_instrumental: bool = False, generate_url: str = "https://studio-api.prod.suno.com/api/generate/v2-web/", feed_url: str = "https://studio-api.prod.suno.com/api/feed/v2?ids=", max_retries: int = 3) -> list[str]:
+async def generate_songs(cookie: str, prompt: str = "", tags: str = "", negative_tags: str = "", proxy: Optional[str] = None, make_instrumental: bool = False, generate_url: str = "https://studio-api.prod.suno.com/api/generate/v2-web/", feed_url: str = "https://studio-api.prod.suno.com/api/feed/v2?ids=", max_retries: int = 3, download_dir: str = ".") -> list[str]:
     authorization = get_authorization_token(cookie)
     #print(f"获取到的authorization: {authorization}")
     
@@ -198,7 +199,7 @@ async def generate_songs(cookie: str, prompt: str = "", tags: str = "", negative
                         if status == 'complete':
                             audio_url = clip.get('audio_url')
                             if audio_url:
-                                filename = await download_audio(client, audio_url, clip_id)
+                                filename = await download_audio(client, audio_url, clip_id, download_dir)
                                 if filename:
                                     downloaded_files.append(filename)
                                 completed_clips_this_round.append(clip_id)
@@ -237,7 +238,7 @@ async def generate_songs(cookie: str, prompt: str = "", tags: str = "", negative
 async def main():
     # complextro是世界上最好的曲风！不接受反驳
     # 去suno那个生成页面(https://suno.com/create)点f12然后刷新，找到https://auth.suno.com/v1/client?__clerk_api_version=2025-11-10&_clerk_js_version=5.111.0这个js请求，把请求体里面的Cookie复制到下面
-    cookie = '1145141919810'
+    cookie = '114514'
     # 生成歌曲的描述性提示文本，包含结构和元素描述，这里面是写歌词之类的，不过乐器之类的也能写
     prompt = "[Intro]\n(Starts with a filtered kick drum and a ticking hi-hat pattern. A digital riser sweep builds tension.)\n[Silence]\n\n[Verse]\n(The full PUNCHY KICK DRUM and CRISP LAYERED SNARES enter, driving the beat. An AGGRESSIVE GROWLING BASSLINE, heavily modulated with LFOs, takes the rhythmic lead. Fast, sharp, metallic HI-HATS create a sense of urgency.)\n\n[Build-up]\n(The beat simplifies to just kicks and hi-hats. FAST ARPEGGIATED SYNTHS start to bubble up. Snare rolls get faster and faster. Add GLITCH SFX and a rising white noise SWEEP.)\n\n[Drop]\n(Maximum impact. The RAZOR-SHARP SAWTOOTH SYNTH LEAD plays an intricate, fragmented melody. Bright SUPER-SAW CHORDS provide powerful harmonic background. STUTTERING VOCAL CHOPS are used as a percussive and melodic hook. The growling bassline becomes even more complex.)\n\n[Verse 2]\n(The sawtooth lead drops out. The growling bass and a new, chopped-up melodic fragment take center stage. The drum pattern becomes more syncopated with added digital percussion fills.)\n\n[Bridge]\n(Atmospheric breakdown. The heavy drums and bass fade out, leaving behind echoing SUPER-SAW PADS and a gentle, melodic synth pluck sequence. A sense of calm before the final storm.)\n\n[Build-up 2]\n(The kick drum re-enters with a heavy sidechain pump. The fast arpeggiated synths return, more intense than before. Add video game sound effects and a powerful riser.)\n\n[Final Drop]\n(Explosive energy. All elements combine. The sawtooth synth lead returns with a higher octave and more aggression. The vocal chops are faster and more glitched. The track is filled with complex drum fills and chaotic glitch sound effects.)\n\n[Outro]\n(Music comes to a hard cut at the climax, followed by the sound of a decaying reverb tail from the final synth chord and a final, single \"glitch\" sound effect.)"
     # 正面标签，用于指定歌曲风格、类型、情绪和技术参数
@@ -252,8 +253,10 @@ async def main():
     generate_url = "https://studio-api.prod.suno.com/api/generate/v2-web/"
     # 轮询状态的API URL
     feed_url = "https://studio-api.prod.suno.com/api/feed/v2?ids="
+    # 下载目录，默认当前目录
+    download_dir = "."
     
-    files = await generate_songs(cookie, prompt, tags, negative_tags, proxy, make_instrumental, generate_url, feed_url)
+    files = await generate_songs(cookie, prompt, tags, negative_tags, proxy, make_instrumental, generate_url, feed_url, download_dir=download_dir)
     print(f"下载的文件: {files}")
 
 if __name__ == "__main__":
